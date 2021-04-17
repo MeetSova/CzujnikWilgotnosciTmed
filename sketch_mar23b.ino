@@ -1,99 +1,114 @@
-/*
- * ESP8266 NodeMCU AJAX Demo
- * Updates and Gets data from webpage without page refresh
- * https://circuits4you.com
- */
+
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <WebServer.h>
+#include <NTPClient.h>
+#include "DHT.h"
 
-#include "index.h" //Our HTML webpage contents with javascripts
+#include "index.h"
 
-#define LED 13  //On board LED
-#define LED1 12  //On board LED
-//SSID and Password of your WiFi router
+#define DHTTYPE DHT22
+#define DHTPIN 12 
+
+DHT dht(DHTPIN, DHTTYPE);
+
+WebServer server(80);
+
+float hum[144] = {0};
+unsigned long actualTime = 0;
+unsigned long rememberTime = 0;
+unsigned long diffTime = 0;
+int j = 0;
+
+String times[144] = {"0"};
+
 const char* ssid = "TP-Link_8748";
 const char* password = "98517527";
 
-WebServer server(80); //Server on port 80
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP);
 
-//===============================================================
-// This routine is executed when you open its IP in browser
-//===============================================================
+String formattedDate;
+
 void handleRoot() {
- String s = MAIN_page; //Read HTML contents
- server.send(200, "text/html", s); //Send web page
+ String s = MAIN_page; 
+ server.send(200, "text/html", s); 
+}
+ 
+void handleADC() {
+ float h = dht.readHumidity();
+ String adcValue = String(h);
+ 
+ server.send(200, "text/plain", adcValue); 
 }
 
-void handleLED() {
- String ledState = "OFF";
- String t_state = server.arg("LEDstate"); //Refer  xhttp.open("GET", "setLED?LEDstate="+led, true);
- Serial.println(t_state);
- if(t_state == "1")
- {
-  digitalWrite(LED,HIGH); //LED ON
-  ledState = "ON"; //Feedback parameter
- }
- else
- {
-  digitalWrite(LED,LOW); //LED OFF
-  ledState = "OFF"; //Feedback parameter  
- }
- 
- server.send(200, "text/plane", ledState); //Send web page
-}
-void handleLED1() {
- String ledState1 = "OFF";
- String t_state1 = server.arg("LEDstate1"); //Refer  xhttp.open("GET", "setLED?LEDstate="+led, true);
- Serial.println(t_state1);
- 
- if(t_state1 == "1")
- {
-  digitalWrite(LED1,HIGH); //LED ON
-  ledState1 = "ON"; //Feedback parameter
- }
- else
- {
-  digitalWrite(LED1,LOW); //LED OFF
-  ledState1 = "OFF"; //Feedback parameter  
- }
- server.send(200, "text/plane", ledState1); //Send web page
-}
-//==============================================================
-//                  SETUP
-//==============================================================
-void setup(void){
-  Serial.begin(115200);
-  
-  WiFi.begin(ssid, password);     //Connect to your WiFi router
-  Serial.println("");
-
-  //Onboard LED port Direction output
-  pinMode(LED,OUTPUT); 
-  
-  // Wait for connection
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+void handletable(){
+  String str = "";
+  for(int z = 0; z < 144; z++){
+    str+= times[z]+" "+String(hum[z])+" ";
   }
+  server.send(200, "text/plain", str); 
+}
 
-  //If connection successful show IP address in serial monitor
+void handletime(){
+  String tim = "";
+  for(int z = 0; z < 144; z++){
+    tim+= times[z]+" ";
+  }
+  server.send(200, "text/plain", tim); 
+}
+
+//===============================================================
+// Setup
+//===============================================================
+void setup(void){
+  for(int i = 0; i <144; i++) times[i] = "NULL";
+  Serial.begin(115200);
+  dht.begin();
+  Serial.println();
+  Serial.println("Booting Sketch...");
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+
+  timeClient.begin();
+  timeClient.setTimeOffset(7200);
+  Serial.println("Connecting to ");
+  Serial.print(ssid);
+
+  while(WiFi.waitForConnectResult() != WL_CONNECTED){      
+      Serial.print(".");
+    }
+    
   Serial.println("");
   Serial.print("Connected to ");
   Serial.println(ssid);
   Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());  //IP address assigned to your ESP
+  Serial.println(WiFi.localIP());
+  
+  server.on("/", handleRoot);
+  server.on("/readADC", handleADC);
+  server.on("/readTAB", handletable);
  
-  server.on("/", handleRoot);      //Which routine to handle at root location. This is display page
-  server.on("/setLED", handleLED);
-  server.on("/setLED1", handleLED1);
-
-  server.begin();                  //Start server
+  server.begin();
   Serial.println("HTTP server started");
 }
-//==============================================================
-//                     LOOP
-//==============================================================
+
+
 void loop(void){
-  server.handleClient();          //Handle client requests
+  while(!timeClient.update()) {
+    timeClient.forceUpdate();
+  }
+  formattedDate = timeClient.getFormattedTime();
+  server.handleClient();
+  actualTime = millis();
+  diffTime = actualTime - rememberTime;
+  if(j > 143) j = 0;
+  if(diffTime >= 600000UL){
+    rememberTime= actualTime;
+    hum[j] = dht.readHumidity();
+    times[j] = formattedDate;
+    j++;
+  }
+  delay(1);
 }
